@@ -9,10 +9,7 @@ const {
   ButtonStyle,
   EmbedBuilder,
   StringSelectMenuBuilder,
-  ChannelType,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle
+  ChannelType
 } = require('discord.js');
 
 const fs = require('fs');
@@ -28,10 +25,17 @@ const client = new Client({
 
 const FILE = './data.json';
 
-/* ---------- DB ---------- */
+/* ================= DB ================= */
 function load() {
   if (!fs.existsSync(FILE)) {
-    return { blacklist: {}, warnings: {}, history: {} };
+    return {
+      blacklist: {},
+      warnings: {},
+      timeouts: {},
+      history: {},
+      allowedRoles: [],
+      allowedUsers: []
+    };
   }
   return JSON.parse(fs.readFileSync(FILE));
 }
@@ -40,12 +44,18 @@ function save(data) {
   fs.writeFileSync(FILE, JSON.stringify(data, null, 2));
 }
 
-/* ---------- ROLE CHECK (GOD SECURITY) ---------- */
-function hasPermission(member) {
-  return member.permissions.has(PermissionsBitField.Flags.Administrator);
+/* ================= PERMISSION SYSTEM ================= */
+function hasPerm(member) {
+  const data = load();
+
+  if (member.permissions.has(PermissionsBitField.Flags.Administrator)) return true;
+  if (data.allowedUsers.includes(member.id)) return true;
+  if (member.roles.cache.some(r => data.allowedRoles.includes(r.id))) return true;
+
+  return false;
 }
 
-/* ---------- SYSTEM SETUP ---------- */
+/* ================= SETUP ================= */
 async function setup(guild) {
 
   let role = guild.roles.cache.find(r => r.name === 'Blacklisted');
@@ -57,20 +67,20 @@ async function setup(guild) {
     });
   }
 
-  let log = guild.channels.cache.find(c => c.name === 'god-log');
+  let log = guild.channels.cache.find(c => c.name === 'elysium-blacklist-log');
 
   if (!log) {
     log = await guild.channels.create({
-      name: 'god-log',
+      name: 'elysium-blacklist-log',
       type: ChannelType.GuildText
     });
   }
 
-  let blRoom = guild.channels.cache.find(c => c.name === "you're-blacklisted");
+  let room = guild.channels.cache.find(c => c.name === "🚫-you're-blacklisted");
 
-  if (!blRoom) {
-    blRoom = await guild.channels.create({
-      name: "you're-blacklisted",
+  if (!room) {
+    room = await guild.channels.create({
+      name: "🚫-you're-blacklisted",
       type: ChannelType.GuildText,
       permissionOverwrites: [
         { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
@@ -78,7 +88,7 @@ async function setup(guild) {
       ]
     });
 
-    blRoom.send({
+    room.send({
       embeds: [
         new EmbedBuilder()
           .setTitle("🚫 ACCESS DENIED")
@@ -88,54 +98,76 @@ async function setup(guild) {
     });
   }
 
-  return { role, log, blRoom };
+  return { role, log, room };
 }
 
-/* ---------- LOG SYSTEM ---------- */
-async function logAction(guild, title, member, admin, reason) {
+/* ================= LOG ================= */
+async function logAction(guild, action, member, admin, reason) {
+
   const { log } = await setup(guild);
 
   const embed = new EmbedBuilder()
-    .setTitle(title)
+    .setTitle("📛 ELYSIUM BLACKLIST LOG")
+    .setColor("Red")
+    .setThumbnail(member.user.displayAvatarURL())
     .addFields(
-      { name: "User", value: `${member.user.tag}` },
-      { name: "Admin", value: `${admin.user.tag}` },
-      { name: "Reason", value: reason || "None" },
-      { name: "Time", value: new Date().toLocaleString() }
+      { name: "User", value: member.user.tag, inline: true },
+      { name: "By", value: admin.user.tag, inline: true },
+      { name: "Action", value: action, inline: true },
+      { name: "Reason", value: reason || "None", inline: true },
+      { name: "Time", value: new Date().toLocaleString(), inline: true }
     )
-    .setColor("Purple")
     .setTimestamp();
 
   log.send({ embeds: [embed] });
 }
 
-/* ---------- APPLY / REMOVE ---------- */
-async function apply(member) {
-  const { role } = await setup(member.guild);
-  if (!member.roles.cache.has(role.id)) await member.roles.add(role);
+/* ================= PROFILE ================= */
+function profile(data, member) {
+
+  const warns = data.warnings[member.id] || 0;
+  const timeouts = data.timeouts[member.id] || 0;
+  const bl = data.blacklist[member.id];
+  const history = data.history[member.id] || [];
+
+  return new EmbedBuilder()
+    .setTitle("👤 PROFILE DASHBOARD")
+    .setColor(bl ? "Red" : "Green")
+    .setThumbnail(member.user.displayAvatarURL())
+    .addFields(
+      { name: "User", value: member.user.tag, inline: true },
+      { name: "ID", value: member.id, inline: true },
+      { name: "Joined", value: member.joinedAt?.toLocaleString() || "Unknown", inline: true },
+      { name: "Created", value: member.user.createdAt.toLocaleString(), inline: true },
+
+      { name: "Blacklist", value: bl ? "YES" : "NO", inline: true },
+      { name: "Warnings", value: `${warns}`, inline: true },
+      { name: "Timeouts", value: `${timeouts}`, inline: true },
+
+      {
+        name: "Last Action",
+        value: history.length ? history.slice(-1)[0] : "No history"
+      }
+    )
+    .setTimestamp();
 }
 
-async function remove(member) {
-  const role = member.guild.roles.cache.find(r => r.name === 'Blacklisted');
-  if (role) await member.roles.remove(role);
-}
-
-/* ---------- READY ---------- */
+/* ================= READY ================= */
 client.once('ready', () => {
-  console.log(`⚡ GOD MODE ACTIVE: ${client.user.tag}`);
+  console.log(`⚡ SYSTEM ONLINE: ${client.user.tag}`);
 });
 
-/* ---------- PANEL ---------- */
+/* ================= PANEL ================= */
 const selected = new Map();
 
 client.on('messageCreate', async (message) => {
 
   if (message.author.bot) return;
 
-  if (message.content === '!panel') {
+  if (message.content === '!blacklistpanel') {
 
-    if (!hasPermission(message.member))
-      return message.reply("No permission");
+    if (!hasPerm(message.member))
+      return message.reply("❌ No permission");
 
     const members = await message.guild.members.fetch();
 
@@ -143,33 +175,34 @@ client.on('messageCreate', async (message) => {
       .filter(m => !m.user.bot)
       .first(25)
       .map(m => ({
-        label: m.user.username,
-        description: m.user.id,
+        label: `👤 ${m.user.username}`,
+        description: `🆔 ${m.id}`,
         value: m.id
       }));
 
     const select = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId('select')
-        .setPlaceholder('Select user')
+        .setCustomId('select_user')
+        .setPlaceholder('👥 Select user')
         .addOptions(options)
     );
 
     const buttons = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('blacklist').setLabel('🚫 BL').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId('unblacklist').setLabel('✅ UNBL').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId('warn').setLabel('⚠️ Warn').setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId('blacklist').setLabel('🚫 BLACKLIST').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('unblacklist').setLabel('♻️ UNBLACKLIST').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('profile').setLabel('👤 PROFILE').setStyle(ButtonStyle.Primary)
     );
 
     const embed = new EmbedBuilder()
-      .setTitle("⚡ GOD MODE PANEL")
-      .setColor("Purple");
+      .setTitle("🚨 BLACKLIST PANEL")
+      .setDescription("Security Control System")
+      .setColor("#ff0000");
 
     message.reply({ embeds: [embed], components: [select, buttons] });
   }
 });
 
-/* ---------- INTERACTIONS ---------- */
+/* ================= INTERACTIONS ================= */
 client.on('interactionCreate', async (interaction) => {
 
   const data = load();
@@ -181,8 +214,8 @@ client.on('interactionCreate', async (interaction) => {
 
   if (interaction.isButton()) {
 
-    if (!hasPermission(interaction.member))
-      return interaction.reply({ content: "No permission", ephemeral: true });
+    if (!hasPerm(interaction.member))
+      return interaction.reply({ content: "❌ No permission", ephemeral: true });
 
     const userId = selected.get(interaction.user.id);
     if (!userId)
@@ -190,67 +223,90 @@ client.on('interactionCreate', async (interaction) => {
 
     const member = await interaction.guild.members.fetch(userId).catch(() => null);
     if (!member)
-      return interaction.reply({ content: "Not found", ephemeral: true });
+      return interaction.reply({ content: "User not found", ephemeral: true });
 
-    /* BLACKLIST */
+    /* ================= BLACKLIST CONFIRM ================= */
     if (interaction.customId === 'blacklist') {
 
-      data.blacklist[member.id] = Date.now();
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`confirm_${member.id}`)
+          .setLabel("🚫 CONFIRM BLACKLIST")
+          .setStyle(ButtonStyle.Danger),
+
+        new ButtonBuilder()
+          .setCustomId('cancel')
+          .setLabel("❌ CANCEL")
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      return interaction.reply({
+        content: `Confirm blacklist for ${member.user.tag}?`,
+        components: [row],
+        ephemeral: true
+      });
+    }
+
+    /* CONFIRM */
+    if (interaction.customId.startsWith('confirm_')) {
+
+      const id = interaction.customId.split('_')[1];
+      const m = await interaction.guild.members.fetch(id);
+
+      const data = load();
+
+      data.blacklist[m.id] = {
+        by: interaction.user.id,
+        time: Date.now()
+      };
+
+      if (!data.history[m.id]) data.history[m.id] = [];
+      data.history[m.id].push(`BLACKLISTED by ${interaction.user.tag}`);
+
       save(data);
 
-      await apply(member);
-      await logAction(interaction.guild, "BLACKLISTED", member, interaction.member, "Manual");
+      await setup(interaction.guild);
+      await logAction(interaction.guild, "BLACKLIST", m, interaction.member, "Confirmed");
 
-      return interaction.reply({ content: "🚫 Done", ephemeral: true });
+      return interaction.update({
+        content: `🚫 ${m.user.tag} blacklisted`,
+        components: []
+      });
+    }
+
+    /* CANCEL */
+    if (interaction.customId === 'cancel') {
+      return interaction.update({
+        content: "❌ Cancelled",
+        components: []
+      });
     }
 
     /* UNBLACKLIST */
     if (interaction.customId === 'unblacklist') {
 
-      const modal = new ModalBuilder()
-        .setCustomId('unbl')
-        .setTitle('Unblacklist Reason');
+      delete data.blacklist[member.id];
 
-      const input = new TextInputBuilder()
-        .setCustomId('reason')
-        .setLabel('Reason')
-        .setStyle(TextInputStyle.Paragraph);
-
-      modal.addComponents(new ActionRowBuilder().addComponents(input));
-
-      return interaction.showModal(modal);
-    }
-
-    /* WARN */
-    if (interaction.customId === 'warn') {
-
-      if (!data.warnings[member.id]) data.warnings[member.id] = 0;
-      data.warnings[member.id]++;
+      if (!data.history[member.id]) data.history[member.id] = [];
+      data.history[member.id].push(`UNBLACKLISTED by ${interaction.user.tag}`);
 
       save(data);
 
-      await logAction(interaction.guild, "WARNING ADDED", member, interaction.member, "Warned");
+      await logAction(interaction.guild, "UNBLACKLIST", member, interaction.member, "Manual");
 
-      return interaction.reply({ content: "⚠️ Warned", ephemeral: true });
+      return interaction.reply({ content: "♻️ Removed", ephemeral: true });
     }
-  }
 
-  /* MODAL */
-  if (interaction.isModalSubmit()) {
+    /* PROFILE */
+    if (interaction.customId === 'profile') {
 
-    const reason = interaction.fields.getTextInputValue('reason');
-    const userId = selected.get(interaction.user.id);
+      const embed = profile(data, member);
 
-    const member = await interaction.guild.members.fetch(userId).catch(() => null);
-    if (!member) return;
-
-    delete data.blacklist[member.id];
-    save(data);
-
-    await remove(member);
-    await logAction(interaction.guild, "UNBLACKLISTED", member, interaction.member, reason);
-
-    return interaction.reply({ content: "Done", ephemeral: true });
+      return interaction.reply({
+        embeds: [embed],
+        ephemeral: true
+      });
+    }
   }
 });
 
