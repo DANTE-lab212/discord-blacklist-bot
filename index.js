@@ -9,7 +9,10 @@ const {
   ButtonStyle,
   EmbedBuilder,
   StringSelectMenuBuilder,
-  ChannelType
+  ChannelType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require('discord.js');
 
 const fs = require('fs');
@@ -25,8 +28,11 @@ const client = new Client({
 
 const FILE = './data.json';
 
+/* ---------- DB ---------- */
 function load() {
-  if (!fs.existsSync(FILE)) return { blacklist: [] };
+  if (!fs.existsSync(FILE)) {
+    return { blacklist: {}, warnings: {}, history: {} };
+  }
   return JSON.parse(fs.readFileSync(FILE));
 }
 
@@ -34,8 +40,14 @@ function save(data) {
   fs.writeFileSync(FILE, JSON.stringify(data, null, 2));
 }
 
-/* إنشاء أو جلب رتبة البلاك ليست */
-async function getRole(guild) {
+/* ---------- ROLE CHECK (GOD SECURITY) ---------- */
+function hasPermission(member) {
+  return member.permissions.has(PermissionsBitField.Flags.Administrator);
+}
+
+/* ---------- SYSTEM SETUP ---------- */
+async function setup(guild) {
+
   let role = guild.roles.cache.find(r => r.name === 'Blacklisted');
 
   if (!role) {
@@ -43,168 +55,202 @@ async function getRole(guild) {
       name: 'Blacklisted',
       permissions: []
     });
-
-    for (const channel of guild.channels.cache.values()) {
-      await channel.permissionOverwrites.edit(role, {
-        ViewChannel: false,
-        SendMessages: false,
-        Connect: false
-      });
-    }
   }
 
-  return role;
-}
+  let log = guild.channels.cache.find(c => c.name === 'god-log');
 
-/* تطبيق الحظر */
-async function applyBlacklist(member) {
-  const role = await getRole(member.guild);
-  if (!member.roles.cache.has(role.id)) {
-    await member.roles.add(role);
-  }
-}
-
-/* لوق */
-async function sendLog(guild, text) {
-  let logChannel = guild.channels.cache.find(c => c.name === 'logs');
-
-  if (!logChannel) {
-    logChannel = await guild.channels.create({
-      name: 'logs',
+  if (!log) {
+    log = await guild.channels.create({
+      name: 'god-log',
       type: ChannelType.GuildText
     });
   }
 
-  logChannel.send(text);
+  let blRoom = guild.channels.cache.find(c => c.name === "you're-blacklisted");
+
+  if (!blRoom) {
+    blRoom = await guild.channels.create({
+      name: "you're-blacklisted",
+      type: ChannelType.GuildText,
+      permissionOverwrites: [
+        { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: role.id, allow: [PermissionsBitField.Flags.ViewChannel] }
+      ]
+    });
+
+    blRoom.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("🚫 ACCESS DENIED")
+          .setDescription("You are blacklisted from this server.")
+          .setColor("Red")
+      ]
+    });
+  }
+
+  return { role, log, blRoom };
 }
 
+/* ---------- LOG SYSTEM ---------- */
+async function logAction(guild, title, member, admin, reason) {
+  const { log } = await setup(guild);
+
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .addFields(
+      { name: "User", value: `${member.user.tag}` },
+      { name: "Admin", value: `${admin.user.tag}` },
+      { name: "Reason", value: reason || "None" },
+      { name: "Time", value: new Date().toLocaleString() }
+    )
+    .setColor("Purple")
+    .setTimestamp();
+
+  log.send({ embeds: [embed] });
+}
+
+/* ---------- APPLY / REMOVE ---------- */
+async function apply(member) {
+  const { role } = await setup(member.guild);
+  if (!member.roles.cache.has(role.id)) await member.roles.add(role);
+}
+
+async function remove(member) {
+  const role = member.guild.roles.cache.find(r => r.name === 'Blacklisted');
+  if (role) await member.roles.remove(role);
+}
+
+/* ---------- READY ---------- */
 client.once('ready', () => {
-  console.log(`${client.user.tag} online`);
+  console.log(`⚡ GOD MODE ACTIVE: ${client.user.tag}`);
 });
 
-/* إعادة تطبيق البلاك ليست عند دخول العضو */
-client.on('guildMemberAdd', async (member) => {
-  const data = load();
+/* ---------- PANEL ---------- */
+const selected = new Map();
 
-  if (data.blacklist.includes(member.id)) {
-    await applyBlacklist(member);
-  }
-});
-
-/* لوحة التحكم */
 client.on('messageCreate', async (message) => {
+
   if (message.author.bot) return;
 
   if (message.content === '!panel') {
-    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator))
-      return;
 
-    const members = message.guild.members.cache
+    if (!hasPermission(message.member))
+      return message.reply("No permission");
+
+    const members = await message.guild.members.fetch();
+
+    const options = members
       .filter(m => !m.user.bot)
-      .first(25);
+      .first(25)
+      .map(m => ({
+        label: m.user.username,
+        description: m.user.id,
+        value: m.id
+      }));
 
-    const options = members.map(m => ({
-      label: m.user.username,
-      description: m.user.id,
-      value: m.id
-    }));
-
-    const select = new StringSelectMenuBuilder()
-      .setCustomId('select_user')
-      .setPlaceholder('اختر العضو')
-      .addOptions(options);
-
-    const row = new ActionRowBuilder().addComponents(select);
+    const select = new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('select')
+        .setPlaceholder('Select user')
+        .addOptions(options)
+    );
 
     const buttons = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('bl')
-        .setLabel('Blacklist')
-        .setStyle(ButtonStyle.Danger),
-
-      new ButtonBuilder()
-        .setCustomId('ubl')
-        .setLabel('Unblacklist')
-        .setStyle(ButtonStyle.Success)
+      new ButtonBuilder().setCustomId('blacklist').setLabel('🚫 BL').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('unblacklist').setLabel('✅ UNBL').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('warn').setLabel('⚠️ Warn').setStyle(ButtonStyle.Secondary)
     );
 
     const embed = new EmbedBuilder()
-      .setTitle('⚙️ Advanced Control Panel')
-      .setDescription('اختر عضو ثم نفذ العملية')
-      .setColor('Red');
+      .setTitle("⚡ GOD MODE PANEL")
+      .setColor("Purple");
 
-    message.reply({ embeds: [embed], components: [row, buttons] });
+    message.reply({ embeds: [embed], components: [select, buttons] });
   }
 });
 
-/* تخزين العضو المختار */
-const selected = new Map();
-
+/* ---------- INTERACTIONS ---------- */
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
-
-  if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator))
-    return interaction.reply({ content: 'No permission', ephemeral: true });
 
   const data = load();
 
-  /* اختيار العضو */
   if (interaction.isStringSelectMenu()) {
     selected.set(interaction.user.id, interaction.values[0]);
-
-    return interaction.reply({
-      content: '✅ تم اختيار العضو',
-      ephemeral: true
-    });
+    return interaction.reply({ content: "Selected", ephemeral: true });
   }
 
-  const userId = selected.get(interaction.user.id);
+  if (interaction.isButton()) {
 
-  if (!userId)
-    return interaction.reply({ content: 'اختر عضو أول', ephemeral: true });
+    if (!hasPermission(interaction.member))
+      return interaction.reply({ content: "No permission", ephemeral: true });
 
-  const member = await interaction.guild.members.fetch(userId).catch(() => null);
+    const userId = selected.get(interaction.user.id);
+    if (!userId)
+      return interaction.reply({ content: "Select user first", ephemeral: true });
 
-  if (!member)
-    return interaction.reply({ content: 'العضو غير موجود', ephemeral: true });
+    const member = await interaction.guild.members.fetch(userId).catch(() => null);
+    if (!member)
+      return interaction.reply({ content: "Not found", ephemeral: true });
 
-  const log = `[${new Date().toLocaleString()}] ${interaction.user.tag}`;
+    /* BLACKLIST */
+    if (interaction.customId === 'blacklist') {
 
-  /* BLACKLIST */
-  if (interaction.customId === 'bl') {
-    if (!data.blacklist.includes(member.id)) {
-      data.blacklist.push(member.id);
+      data.blacklist[member.id] = Date.now();
       save(data);
+
+      await apply(member);
+      await logAction(interaction.guild, "BLACKLISTED", member, interaction.member, "Manual");
+
+      return interaction.reply({ content: "🚫 Done", ephemeral: true });
     }
 
-    await applyBlacklist(member);
+    /* UNBLACKLIST */
+    if (interaction.customId === 'unblacklist') {
 
-    await sendLog(interaction.guild,
-      `🚫 BLACKLIST\nUser: ${member.user.tag}\nBy: ${interaction.user.tag}\nTime: ${new Date().toLocaleString()}`
-    );
+      const modal = new ModalBuilder()
+        .setCustomId('unbl')
+        .setTitle('Unblacklist Reason');
 
-    return interaction.reply({
-      content: `🚫 Blacklisted: ${member.user.tag}`,
-      ephemeral: true
-    });
+      const input = new TextInputBuilder()
+        .setCustomId('reason')
+        .setLabel('Reason')
+        .setStyle(TextInputStyle.Paragraph);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(input));
+
+      return interaction.showModal(modal);
+    }
+
+    /* WARN */
+    if (interaction.customId === 'warn') {
+
+      if (!data.warnings[member.id]) data.warnings[member.id] = 0;
+      data.warnings[member.id]++;
+
+      save(data);
+
+      await logAction(interaction.guild, "WARNING ADDED", member, interaction.member, "Warned");
+
+      return interaction.reply({ content: "⚠️ Warned", ephemeral: true });
+    }
   }
 
-  /* UNBLACKLIST */
-  if (interaction.customId === 'ubl') {
-    data.blacklist = data.blacklist.filter(id => id !== member.id);
+  /* MODAL */
+  if (interaction.isModalSubmit()) {
+
+    const reason = interaction.fields.getTextInputValue('reason');
+    const userId = selected.get(interaction.user.id);
+
+    const member = await interaction.guild.members.fetch(userId).catch(() => null);
+    if (!member) return;
+
+    delete data.blacklist[member.id];
     save(data);
 
-    const role = interaction.guild.roles.cache.find(r => r.name === 'Blacklisted');
-    if (role) await member.roles.remove(role);
+    await remove(member);
+    await logAction(interaction.guild, "UNBLACKLISTED", member, interaction.member, reason);
 
-    await sendLog(interaction.guild,
-      `✅ UNBLACKLIST\nUser: ${member.user.tag}\nBy: ${interaction.user.tag}\nTime: ${new Date().toLocaleString()}`
-    );
-
-    return interaction.reply({
-      content: `✅ Unblacklisted: ${member.user.tag}`,
-      ephemeral: true
-    });
+    return interaction.reply({ content: "Done", ephemeral: true });
   }
 });
 
