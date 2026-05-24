@@ -28,12 +28,37 @@ const DB_FILE = "./data.json";
 
 function load() {
   if (!fs.existsSync(DB_FILE)) {
-    return { allowedUsers: [], allowedRoles: [] };
+    return { blacklist: {}, allowedUsers: [], allowedRoles: [] };
   }
   return JSON.parse(fs.readFileSync(DB_FILE));
 }
 
-/* ================= CHECK PERMISSION ================= */
+function save(d) {
+  fs.writeFileSync(DB_FILE, JSON.stringify(d, null, 2));
+}
+
+/* ================= STATE ================= */
+const selectedUser = new Map();
+
+/* ================= SETUP ================= */
+function getSetup(guild) {
+
+  const role = guild.roles.cache.find(r =>
+    r.name.toLowerCase() === "blacklisted"
+  );
+
+  const room = guild.channels.cache.find(c =>
+    c.name.toLowerCase().includes("blacklist")
+  );
+
+  const log = guild.channels.cache.find(c =>
+    c.name.toLowerCase().includes("log")
+  );
+
+  return { role, room, log };
+}
+
+/* ================= PERMISSION ================= */
 function canUse(member) {
   const db = load();
 
@@ -46,25 +71,89 @@ function canUse(member) {
   );
 }
 
-/* ================= SELECTED USER ================= */
-const selectedUser = new Map();
+/* ================= LOG ================= */
+async function logAction(guild, type, member, admin, reason) {
 
-/* ================= PANEL COMMAND ================= */
+  const { log } = getSetup(guild);
+  if (!log) return;
+
+  const embed = new EmbedBuilder()
+    .setTitle(type === "BL" ? "🚫 BLACKLISTED" : "♻️ UNBLACKLISTED")
+    .setColor(type === "BL" ? "Red" : "Green")
+    .setThumbnail(member.user.displayAvatarURL())
+    .addFields(
+      { name: "User", value: member.user.tag, inline: true },
+      { name: "ID", value: member.id, inline: true },
+      { name: "By", value: admin.user.tag, inline: true },
+      { name: "Reason", value: reason || "None", inline: false },
+      { name: "Account Created", value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>` },
+      { name: "Joined Server", value: member.joinedAt ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:R>` : "Unknown" }
+    )
+    .setTimestamp();
+
+  log.send({ embeds: [embed] });
+}
+
+/* ================= BLACKLIST APPLY ================= */
+async function applyBlacklist(member, reason) {
+
+  const db = load();
+  const { role } = getSetup(member.guild);
+
+  if (!role) return;
+
+  /* remove all roles */
+  await member.roles.set([role]).catch(() => {});
+
+  db.blacklist[member.id] = {
+    reason,
+    time: Date.now()
+  };
+
+  save(db);
+
+  /* DM */
+  try {
+    await member.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("🚫 BLACKLISTED")
+          .setColor("Red")
+          .setDescription(
+            `You are blacklisted.\n\nReason: ${reason}`
+          )
+      ]
+    });
+  } catch {}
+}
+
+/* ================= UNBLACKLIST ================= */
+async function removeBlacklist(member) {
+
+  const db = load();
+  const { role } = getSetup(member.guild);
+
+  delete db.blacklist[member.id];
+  save(db);
+
+  if (role) {
+    await member.roles.remove(role).catch(() => {});
+  }
+}
+
+/* ================= PANEL ================= */
 client.on("messageCreate", async (message) => {
 
-  if (!message.guild) return;
   if (message.author.bot) return;
 
-  console.log("message received:", message.content); // للتأكد
-
-  if (message.content.trim() !== "!panel") return;
+  if (message.content !== "!panel") return;
 
   if (!canUse(message.member))
     return message.reply("❌ No permission");
 
-  await message.guild.members.fetch();
+  const members = await message.guild.members.fetch();
 
-  const members = message.guild.members.cache
+  const options = members
     .filter(m => !m.user.bot)
     .map(m => ({
       label: m.user.username.slice(0, 25),
@@ -76,7 +165,7 @@ client.on("messageCreate", async (message) => {
     new StringSelectMenuBuilder()
       .setCustomId("user")
       .setPlaceholder("Select user")
-      .addOptions(members)
+      .addOptions(options)
   );
 
   const buttons = new ActionRowBuilder().addComponents(
@@ -91,13 +180,12 @@ client.on("messageCreate", async (message) => {
       .setStyle(ButtonStyle.Success)
   );
 
-  const embed = new EmbedBuilder()
-    .setTitle("BLACKLIST PANEL")
-    .setColor("Red")
-    .setDescription("Control Panel Loaded");
-
   message.channel.send({
-    embeds: [embed],
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("BLACKLIST PANEL")
+        .setColor("Red")
+    ],
     components: [menu, buttons]
   });
 });
@@ -105,7 +193,9 @@ client.on("messageCreate", async (message) => {
 /* ================= INTERACTIONS ================= */
 client.on("interactionCreate", async (interaction) => {
 
-  if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
+  if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
+
+  const uid = selectedUser.get(interaction.user.id);
 
   if (interaction.isStringSelectMenu()) {
 
@@ -113,64 +203,66 @@ client.on("interactionCreate", async (interaction) => {
       selectedUser.set(interaction.user.id, interaction.values[0]);
 
       return interaction.reply({
-        content: `User selected`,
+        content: "User selected",
         ephemeral: true
       });
     }
   }
 
-  if (interaction.isButton()) {
+  const member = uid
+    ? await interaction.guild.members.fetch(uid).catch(() => null)
+    : null;
 
-    const uid = selectedUser.get(interaction.user.id);
+  if (!member)
+    return interaction.reply({ content: "Select user first", ephemeral: true });
 
-    if (!uid)
-      return interaction.reply({
-        content: "Select a user first",
-        ephemeral: true
-      });
+  /* ================= BLACKLIST CONFIRM ================= */
+  if (interaction.customId === "bl") {
 
-    const member = await interaction.guild.members.fetch(uid).catch(() => null);
-
-    if (!member)
-      return interaction.reply({
-        content: "User not found",
-        ephemeral: true
-      });
-
-    /* BLACKLIST */
-    if (interaction.customId === "bl") {
-
-      const role = interaction.guild.roles.cache.find(r => r.name === "Blacklisted");
-
-      if (!role)
-        return interaction.reply({
-          content: "Blacklisted role not found",
-          ephemeral: true
-        });
-
-      await member.roles.set([role]).catch(() => {});
-
-      return interaction.reply({
-        content: `🚫 ${member.user.tag} blacklisted`,
-        ephemeral: true
-      });
-    }
-
-    /* UNBLACKLIST */
-    if (interaction.customId === "unbl") {
-
-      const role = interaction.guild.roles.cache.find(r => r.name === "Blacklisted");
-
-      if (role) {
-        await member.roles.remove(role).catch(() => {});
-      }
-
-      return interaction.reply({
-        content: `♻️ ${member.user.tag} unblacklisted`,
-        ephemeral: true
-      });
-    }
+    return interaction.reply({
+      content: `⚠️ Confirm blacklist for **${member.user.tag}**?`,
+      ephemeral: true,
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`confirm_bl_${member.id}`)
+            .setLabel("CONFIRM")
+            .setStyle(ButtonStyle.Danger)
+        )
+      ]
+    });
   }
+
+  /* ================= CONFIRM ACTION ================= */
+  if (interaction.customId.startsWith("confirm_bl_")) {
+
+    const reason = "No reason set";
+
+    await applyBlacklist(member, reason);
+    await logAction(interaction.guild, "BL", member, interaction.user, reason);
+
+    return interaction.update({
+      content: "🚫 Blacklisted successfully",
+      components: []
+    });
+  }
+
+  /* ================= UNBLACKLIST ================= */
+  if (interaction.customId === "unbl") {
+
+    await removeBlacklist(member);
+    await logAction(interaction.guild, "UNBL", member, interaction.user, "Removed");
+
+    return interaction.reply({
+      content: "♻️ Unblacklisted",
+      ephemeral: true
+    });
+  }
+});
+
+/* ================= READY ================= */
+client.on("ready", () => {
+  console.log(`${client.user.tag} online`);
 });
 
 /* ================= LOGIN ================= */
