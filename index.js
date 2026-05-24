@@ -7,7 +7,9 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder
+  EmbedBuilder,
+  StringSelectMenuBuilder,
+  ChannelType
 } = require('discord.js');
 
 const fs = require('fs');
@@ -21,11 +23,10 @@ const client = new Client({
   ]
 });
 
-const FILE = './blacklist.json';
-const tempTargets = new Map();
+const FILE = './data.json';
 
 function load() {
-  if (!fs.existsSync(FILE)) return [];
+  if (!fs.existsSync(FILE)) return { blacklist: [] };
   return JSON.parse(fs.readFileSync(FILE));
 }
 
@@ -33,6 +34,7 @@ function save(data) {
   fs.writeFileSync(FILE, JSON.stringify(data, null, 2));
 }
 
+/* إنشاء أو جلب رتبة البلاك ليست */
 async function getRole(guild) {
   let role = guild.roles.cache.find(r => r.name === 'Blacklisted');
 
@@ -54,78 +56,132 @@ async function getRole(guild) {
   return role;
 }
 
-async function apply(member) {
+/* تطبيق الحظر */
+async function applyBlacklist(member) {
   const role = await getRole(member.guild);
   if (!member.roles.cache.has(role.id)) {
     await member.roles.add(role);
   }
 }
 
+/* لوق */
+async function sendLog(guild, text) {
+  let logChannel = guild.channels.cache.find(c => c.name === 'logs');
+
+  if (!logChannel) {
+    logChannel = await guild.channels.create({
+      name: 'logs',
+      type: ChannelType.GuildText
+    });
+  }
+
+  logChannel.send(text);
+}
+
 client.once('ready', () => {
   console.log(`${client.user.tag} online`);
 });
 
+/* إعادة تطبيق البلاك ليست عند دخول العضو */
+client.on('guildMemberAdd', async (member) => {
+  const data = load();
+
+  if (data.blacklist.includes(member.id)) {
+    await applyBlacklist(member);
+  }
+});
+
+/* لوحة التحكم */
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  if (message.content.startsWith('!panel')) {
+  if (message.content === '!panel') {
     if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator))
       return;
 
-    const args = message.content.split(' ');
-    const targetId = args[1];
+    const members = message.guild.members.cache
+      .filter(m => !m.user.bot)
+      .first(25);
 
-    if (!targetId) return message.reply('حط ID');
+    const options = members.map(m => ({
+      label: m.user.username,
+      description: m.user.id,
+      value: m.id
+    }));
 
-    const member = await message.guild.members.fetch(targetId).catch(() => null);
-    if (!member) return message.reply('ID غلط');
+    const select = new StringSelectMenuBuilder()
+      .setCustomId('select_user')
+      .setPlaceholder('اختر العضو')
+      .addOptions(options);
 
-    tempTargets.set(message.author.id, member.id);
+    const row = new ActionRowBuilder().addComponents(select);
 
-    const embed = new EmbedBuilder()
-      .setTitle('⚙️ Blacklist Panel')
-      .setDescription(`Target: ${member.user.tag}`)
-      .setColor('Red');
-
-    const row = new ActionRowBuilder().addComponents(
+    const buttons = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId('blacklist')
+        .setCustomId('bl')
         .setLabel('Blacklist')
         .setStyle(ButtonStyle.Danger),
 
       new ButtonBuilder()
-        .setCustomId('unblacklist')
+        .setCustomId('ubl')
         .setLabel('Unblacklist')
         .setStyle(ButtonStyle.Success)
     );
 
-    message.reply({ embeds: [embed], components: [row] });
+    const embed = new EmbedBuilder()
+      .setTitle('⚙️ Advanced Control Panel')
+      .setDescription('اختر عضو ثم نفذ العملية')
+      .setColor('Red');
+
+    message.reply({ embeds: [embed], components: [row, buttons] });
   }
 });
 
+/* تخزين العضو المختار */
+const selected = new Map();
+
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isButton()) return;
+  if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
 
   if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator))
     return interaction.reply({ content: 'No permission', ephemeral: true });
 
-  const targetId = tempTargets.get(interaction.user.id);
-  if (!targetId)
-    return interaction.reply({ content: 'حدد عضو أول', ephemeral: true });
+  const data = load();
 
-  const member = await interaction.guild.members.fetch(targetId).catch(() => null);
+  /* اختيار العضو */
+  if (interaction.isStringSelectMenu()) {
+    selected.set(interaction.user.id, interaction.values[0]);
+
+    return interaction.reply({
+      content: '✅ تم اختيار العضو',
+      ephemeral: true
+    });
+  }
+
+  const userId = selected.get(interaction.user.id);
+
+  if (!userId)
+    return interaction.reply({ content: 'اختر عضو أول', ephemeral: true });
+
+  const member = await interaction.guild.members.fetch(userId).catch(() => null);
+
   if (!member)
     return interaction.reply({ content: 'العضو غير موجود', ephemeral: true });
 
-  const data = load();
+  const log = `[${new Date().toLocaleString()}] ${interaction.user.tag}`;
 
-  if (interaction.customId === 'blacklist') {
-    if (!data.includes(member.id)) {
-      data.push(member.id);
+  /* BLACKLIST */
+  if (interaction.customId === 'bl') {
+    if (!data.blacklist.includes(member.id)) {
+      data.blacklist.push(member.id);
       save(data);
     }
 
-    await apply(member);
+    await applyBlacklist(member);
+
+    await sendLog(interaction.guild,
+      `🚫 BLACKLIST\nUser: ${member.user.tag}\nBy: ${interaction.user.tag}\nTime: ${new Date().toLocaleString()}`
+    );
 
     return interaction.reply({
       content: `🚫 Blacklisted: ${member.user.tag}`,
@@ -133,12 +189,17 @@ client.on('interactionCreate', async (interaction) => {
     });
   }
 
-  if (interaction.customId === 'unblacklist') {
-    const newData = data.filter(id => id !== member.id);
-    save(newData);
+  /* UNBLACKLIST */
+  if (interaction.customId === 'ubl') {
+    data.blacklist = data.blacklist.filter(id => id !== member.id);
+    save(data);
 
     const role = interaction.guild.roles.cache.find(r => r.name === 'Blacklisted');
     if (role) await member.roles.remove(role);
+
+    await sendLog(interaction.guild,
+      `✅ UNBLACKLIST\nUser: ${member.user.tag}\nBy: ${interaction.user.tag}\nTime: ${new Date().toLocaleString()}`
+    );
 
     return interaction.reply({
       content: `✅ Unblacklisted: ${member.user.tag}`,
