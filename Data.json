@@ -1,3 +1,6 @@
 {
-  "blacklist": []
+  "blacklist": {},
+  "history": {},
+  "allowedRoles": [],
+  "allowedUsers": []
 }
