@@ -1,6 +1,6 @@
 {
   "blacklist": {},
-  "history": {},
-  "allowedRoles": [],
-  "allowedUsers": []
+  "warnings": {},
+  "timeouts": {},
+  "history": {}
 }
