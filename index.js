@@ -16,8 +16,6 @@ const {
 
 const fs = require("fs");
 
-/* ================= CLIENT ================= */
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -26,8 +24,6 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
-
-/* ================= DATABASE ================= */
 
 const DB_FILE = "./data.json";
 
@@ -49,11 +45,7 @@ function saveDB(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-/* ================= TEMP ================= */
-
 const selectedUser = new Map();
-
-/* ================= SETUP ================= */
 
 function getBlacklistRole(guild) {
   return guild.roles.cache.find(
@@ -66,8 +58,6 @@ function getLogChannel(guild) {
     c => c.name.toLowerCase() === "blacklist-log"
   );
 }
-
-/* ================= PERMISSIONS ================= */
 
 function canUse(member) {
   const db = loadDB();
@@ -84,8 +74,6 @@ function canUse(member) {
   }
   return false;
 }
-
-/* ================= LOG SYSTEM ================= */
 
 async function sendLog(guild, type, member, admin, reason) {
   const logChannel = getLogChannel(guild);
@@ -114,8 +102,6 @@ async function sendLog(guild, type, member, admin, reason) {
 
   logChannel.send({ embeds: [embed] });
 }
-
-/* ================= APPLY BLACKLIST ================= */
 
 async function applyBlacklist(member, admin, reason) {
   const db = loadDB();
@@ -147,8 +133,6 @@ async function applyBlacklist(member, admin, reason) {
   await sendLog(member.guild, "BL", member, admin.user, reason);
 }
 
-/* ================= REMOVE BLACKLIST ================= */
-
 async function removeBlacklist(member, admin, reason) {
   const db = loadDB();
   const role = getBlacklistRole(member.guild);
@@ -171,8 +155,6 @@ async function removeBlacklist(member, admin, reason) {
 
   await sendLog(member.guild, "UNBL", member, admin.user, reason);
 }
-
-/* ================= EVENT: GUILD MEMBER ADD ================= */
 
 client.on("guildMemberAdd", async (member) => {
   const db = loadDB();
@@ -198,8 +180,6 @@ client.on("guildMemberAdd", async (member) => {
     }
   }
 });
-
-/* ================= MESSAGES & PANEL ================= */
 
 client.on("messageCreate", async message => {
   if (!message.guild || message.author.bot) return;
@@ -242,26 +222,21 @@ client.on("messageCreate", async message => {
     components: [userMenu, buttons]
   });
 
-  // مسح رسالة البانل بالكامل بعد 60 ثانية (دقيقة)
   setTimeout(() => {
     panelMsg.delete().catch(() => {});
   }, 60000);
 });
-
-/* ================= INTERACTIONS ================= */
 
 client.on("interactionCreate", async interaction => {
   if (!canUse(interaction.member)) {
     return interaction.reply({ content: "❌ No permission", ephemeral: true });
   }
 
-  /* 1. معالجة اختيار العضو و إظهار البروفايل */
   if (interaction.isUserSelectMenu()) {
     if (interaction.customId === "select_user") {
       const targetUserId = interaction.values[0];
       selectedUser.set(interaction.user.id, targetUserId);
 
-      // مسح الاختيار من الذاكرة بعد 60 ثانية إذا لم يتم اتخاذ إجراء
       setTimeout(() => {
         if (selectedUser.get(interaction.user.id) === targetUserId) {
           selectedUser.delete(interaction.user.id);
@@ -276,10 +251,11 @@ client.on("interactionCreate", async interaction => {
       const timeouts = db.timeouts[member.id]?.length || 0;
 
       const profileEmbed = new EmbedBuilder()
-        .setColor("#2b2d31") // لون يتماشى مع الجو الخاص بالسيرفر
+        .setColor("#2b2d31")
         .setTitle(`ملف العضو: ${member.user.tag}`)
         .setThumbnail(member.user.displayAvatarURL())
         .addFields(
+          { name: "🆔 ID", value: `${member.id}`, inline: true },
           { name: "📅 إنشاء الحساب", value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true },
           { name: "📥 دخول السيرفر", value: member.joinedAt ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:R>` : "غير معروف", inline: true },
           { name: "⚠️ تحذيرات", value: `${warns}`, inline: true },
@@ -294,7 +270,6 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  /* 2. معالجة ضغط الأزرار */
   if (interaction.isButton()) {
     const selected = selectedUser.get(interaction.user.id);
     if (!selected) return interaction.reply({ content: "❌ Select user first or time expired (1 Min)", ephemeral: true });
@@ -346,7 +321,6 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
-  /* 3. معالجة بيانات المودال */
   if (interaction.isModalSubmit()) {
     if (interaction.customId.startsWith("blacklist_modal_")) {
       const targetId = interaction.customId.split("_")[2];
@@ -370,12 +344,8 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-/* ================= READY ================= */
-
 client.on("ready", () => {
   console.log(`${client.user.tag} online`);
 });
-
-/* ================= LOGIN ================= */
 
 client.login(process.env.TOKEN);
