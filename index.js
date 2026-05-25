@@ -1,5 +1,14 @@
 require("dotenv").config();
 
+// --- الإضافة الخاصة بـ Render وأي استضافة لفتح المنفذ (Port) ---
+const express = require("express");
+const app = express();
+const port = process.env.PORT || 3000;
+const host = process.env.HOST || "0.0.0.0";
+app.get("/", (req, res) => res.send("Bot is active and running on Host!"));
+app.listen(port, host, () => console.log(`✅ Web server is listening on ${host}:${port}`));
+// ---------------------------------------------------------------
+
 const {
   Client,
   GatewayIntentBits,
@@ -341,7 +350,7 @@ client.on("interactionCreate", async interaction => {
         ephemeral: true
       });
     }
-  }
+  }S
 });
 
 client.on("ready", () => {
