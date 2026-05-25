@@ -1,16 +1,3 @@
-أبشر يا DANTE، هذا هو كود `index.js` كامل ومتكامل من الصفر، مدمج فيه كل التعديلات اللي طلبناها وتعبنا عليها:
-
-* نظام الحفظ الدائم (data.json).
-* نظام مسح رسالة البانل بعد دقيقة.
-* نظام مسح اختيار المشرف من الذاكرة بعد دقيقة لتفادي الأخطاء.
-* عرض بروفايل العضو المخفي (تاريخ الحساب، دخوله السيرفر، عدد تحذيراته والتايم أوت).
-* ثيم سيرفر **ELYSIUM** الملون (الوردي الفاقع `#F91A5A` وزر إزالة الحظر الأزرق).
-* مودال كتابة السبب بعنوان "نظام العقوبات".
-* نظام التصدي لمحاولات التخطي (إرجاع الرتبة تلقائياً عند الخروج والدخول).
-
-انسخ هذا الكود بالكامل والصقه في ملف `index.js` الخاص بك:
-
-```javascript
 require("dotenv").config();
 
 const {
@@ -62,9 +49,8 @@ function saveDB(data) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-/* ================= TEMP MAP ================= */
+/* ================= TEMP ================= */
 
-// لتخزين العضو المحدد مؤقتاً
 const selectedUser = new Map();
 
 /* ================= SETUP ================= */
@@ -110,18 +96,20 @@ async function sendLog(guild, type, member, admin, reason) {
   const timeouts = db.timeouts[member.id]?.length || 0;
 
   const embed = new EmbedBuilder()
-    .setColor(type === "BL" ? "#F91A5A" : "Blue")
-    .setTitle(type === "BL" ? "🚫 تم إعطاء بلاك ليست" : "♻️ تم إزالة البلاك ليست")
+    .setColor(type === "BL" ? "Red" : "Green")
+    .setTitle(type === "BL" ? "🚫 USER BLACKLISTED" : "♻️ USER UNBLACKLISTED")
     .setThumbnail(member.user.displayAvatarURL())
     .addFields(
-      { name: "👤 العضو", value: `${member.user.tag}`, inline: true },
-      { name: "🆔 المعرف", value: member.id, inline: true },
-      { name: "👮 الإداري", value: admin.tag, inline: true },
-      { name: "📝 السبب", value: reason || "لا يوجد سبب", inline: false },
-      { name: "⚠️ التحذيرات السابقة", value: `${warns}`, inline: true },
-      { name: "⏳ التايم أوت السابق", value: `${timeouts}`, inline: true }
+      { name: "👤 User", value: `${member.user.tag}`, inline: true },
+      { name: "🆔 ID", value: member.id, inline: true },
+      { name: "👮 Staff", value: admin.tag, inline: true },
+      { name: "📝 Reason", value: reason || "No reason", inline: false },
+      { name: "⚠️ Warnings", value: `${warns}`, inline: true },
+      { name: "⏳ Timeouts", value: `${timeouts}`, inline: true },
+      { name: "📅 Account Created", value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: false },
+      { name: "📥 Joined Server", value: member.joinedAt ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:R>` : "Unknown", inline: false }
     )
-    .setFooter({ text: "Elysium Security System" })
+    .setFooter({ text: "Ultimate Blacklist System" })
     .setTimestamp();
 
   logChannel.send({ embeds: [embed] });
@@ -134,7 +122,7 @@ async function applyBlacklist(member, admin, reason) {
   const role = getBlacklistRole(member.guild);
 
   if (!role) {
-    return admin.send("❌ لم يتم العثور على رتبة 'Blacklisted' في السيرفر.").catch(() => {});
+    return admin.send("❌ Blacklisted role not found.").catch(() => {});
   }
 
   await member.roles.set([role]).catch(() => {});
@@ -149,9 +137,9 @@ async function applyBlacklist(member, admin, reason) {
     await member.send({
       embeds: [
         new EmbedBuilder()
-          .setColor("#F91A5A")
-          .setTitle("🚫 تم حظرك من السيرفر")
-          .setDescription(`لقد تم إعطاؤك بلاك ليست في سيرفر **${member.guild.name}**.\n\n📝 السبب: ${reason}`)
+          .setColor("Red")
+          .setTitle("🚫 ACCESS DENIED")
+          .setDescription(`You are blacklisted from **${member.guild.name}**.\n\n📝 Reason: ${reason}`)
       ]
     });
   } catch {}
@@ -174,9 +162,9 @@ async function removeBlacklist(member, admin, reason) {
     await member.send({
       embeds: [
         new EmbedBuilder()
-          .setColor("Blue")
-          .setTitle("♻️ إزالة البلاك ليست")
-          .setDescription(`تمت إزالة البلاك ليست الخاص بك وتقدر تتفاعل بالسيرفر الآن.\n\n📝 السبب: ${reason}`)
+          .setColor("Green")
+          .setTitle("♻️ BLACKLIST REMOVED")
+          .setDescription(`Your blacklist was removed.\n\n📝 Reason: ${reason}`)
       ]
     });
   } catch {}
@@ -188,7 +176,6 @@ async function removeBlacklist(member, admin, reason) {
 
 client.on("guildMemberAdd", async (member) => {
   const db = loadDB();
-  // إذا كان العضو في البلاك ليست وحاول يدخل من جديد
   if (db.blacklist[member.id]) {
     const role = getBlacklistRole(member.guild);
     if (role) await member.roles.set([role]).catch(() => {});
@@ -205,7 +192,7 @@ client.on("guildMemberAdd", async (member) => {
           { name: "⚙️ الإجراء المتبع", value: "تمت إعادة سحب الرتب وفرض رتبة البلاك ليست تلقائياً.", inline: false }
         )
         .setThumbnail(member.user.displayAvatarURL())
-        .setFooter({ text: "Elysium Security System" })
+        .setFooter({ text: "Ultimate Blacklist System" })
         .setTimestamp();
       logChannel.send({ embeds: [embed] });
     }
@@ -218,7 +205,6 @@ client.on("messageCreate", async message => {
   if (!message.guild || message.author.bot) return;
 
   const db = loadDB();
-  // منع المتبندين من الكلام
   if (db.blacklist[message.author.id]) {
     if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
       await message.delete().catch(() => {});
@@ -226,39 +212,37 @@ client.on("messageCreate", async message => {
     }
   }
 
-  // إظهار لوحة التحكم
   if (message.content !== "!panel") return;
-  if (!canUse(message.member)) return message.reply("❌ لا تملك صلاحية لاستخدام هذا الأمر.");
+  if (!canUse(message.member)) return message.reply("❌ No permission");
 
   const userMenu = new ActionRowBuilder().addComponents(
     new UserSelectMenuBuilder()
       .setCustomId("select_user")
-      .setPlaceholder("🔍 | ابحث وحدد العضو من هنا...")
+      .setPlaceholder("Select User (Search active)")
   );
 
   const buttons = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("blacklist")
-      .setLabel("🚫 إعطاء بلاك ليست")
+      .setLabel("🚫 BLACKLIST")
       .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId("unblacklist")
-      .setLabel("♻️ إزالة البلاك ليست")
-      .setStyle(ButtonStyle.Primary)
+      .setLabel("♻️ UNBLACKLIST")
+      .setStyle(ButtonStyle.Success)
   );
 
   const embed = new EmbedBuilder()
-    .setColor("#F91A5A")
-    .setTitle("🎮 E L Y S I U M  |  لوحة التحكم")
-    .setDescription("**أهلاً بك في نظام عقوبات اليزيوم!** 🚀\n\nالرجاء اختيار العضو من القائمة بالأسفل لتطبيق العقوبة أو إزالتها.\n`تأكد من اختيار الشخص الصحيح قبل التأكيد.`")
-    .setFooter({ text: "Elysium Management", iconURL: client.user.displayAvatarURL() });
+    .setColor("Red")
+    .setTitle("🚫 BLACKLIST PANEL")
+    .setDescription("Advanced moderation system");
 
   const panelMsg = await message.channel.send({
     embeds: [embed],
     components: [userMenu, buttons]
   });
 
-  // مسح البانل بعد 60 ثانية لتنظيف الشات
+  // مسح رسالة البانل بالكامل بعد 60 ثانية (دقيقة)
   setTimeout(() => {
     panelMsg.delete().catch(() => {});
   }, 60000);
@@ -268,16 +252,16 @@ client.on("messageCreate", async message => {
 
 client.on("interactionCreate", async interaction => {
   if (!canUse(interaction.member)) {
-    return interaction.reply({ content: "❌ لا تملك صلاحيات كافية.", ephemeral: true });
+    return interaction.reply({ content: "❌ No permission", ephemeral: true });
   }
 
-  /* 1. اختيار العضو وعرض البروفايل */
+  /* 1. معالجة اختيار العضو و إظهار البروفايل */
   if (interaction.isUserSelectMenu()) {
     if (interaction.customId === "select_user") {
       const targetUserId = interaction.values[0];
       selectedUser.set(interaction.user.id, targetUserId);
 
-      // مسح الاختيار من الذاكرة بعد 60 ثانية
+      // مسح الاختيار من الذاكرة بعد 60 ثانية إذا لم يتم اتخاذ إجراء
       setTimeout(() => {
         if (selectedUser.get(interaction.user.id) === targetUserId) {
           selectedUser.delete(interaction.user.id);
@@ -285,14 +269,14 @@ client.on("interactionCreate", async interaction => {
       }, 60000);
 
       const member = await interaction.guild.members.fetch(targetUserId).catch(() => null);
-      if (!member) return interaction.reply({ content: "❌ لم يتم العثور على العضو.", ephemeral: true });
+      if (!member) return interaction.reply({ content: "❌ User not found", ephemeral: true });
 
       const db = loadDB();
       const warns = db.warnings[member.id]?.length || 0;
       const timeouts = db.timeouts[member.id]?.length || 0;
 
       const profileEmbed = new EmbedBuilder()
-        .setColor("#F91A5A")
+        .setColor("#2b2d31") // لون يتماشى مع الجو الخاص بالسيرفر
         .setTitle(`ملف العضو: ${member.user.tag}`)
         .setThumbnail(member.user.displayAvatarURL())
         .addFields(
@@ -300,24 +284,23 @@ client.on("interactionCreate", async interaction => {
           { name: "📥 دخول السيرفر", value: member.joinedAt ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:R>` : "غير معروف", inline: true },
           { name: "⚠️ تحذيرات", value: `${warns}`, inline: true },
           { name: "⏳ تايم أوت", value: `${timeouts}`, inline: true }
-        )
-        .setFooter({ text: "لديك 60 ثانية لتأكيد العقوبة من الأزرار السفلية للبانل" });
+        );
 
       return interaction.reply({
-        content: "✅ **تم اختيار العضو بنجاح. راجع بياناته قبل اتخاذ الإجراء:**",
+        content: "✅ **تم اختيار العضو بنجاح. راجع بياناته قبل اتخاذ العقوبة:**",
         embeds: [profileEmbed],
         ephemeral: true
       });
     }
   }
 
-  /* 2. ضغط الأزرار (تأكيد أو إلغاء) */
+  /* 2. معالجة ضغط الأزرار */
   if (interaction.isButton()) {
     const selected = selectedUser.get(interaction.user.id);
-    if (!selected) return interaction.reply({ content: "❌ الرجاء تحديد عضو من القائمة أولاً، أو انتهى وقت التحديد (دقيقة).", ephemeral: true });
+    if (!selected) return interaction.reply({ content: "❌ Select user first or time expired (1 Min)", ephemeral: true });
 
     const member = await interaction.guild.members.fetch(selected).catch(() => null);
-    if (!member) return interaction.reply({ content: "❌ لم يتم العثور على العضو في السيرفر.", ephemeral: true });
+    if (!member) return interaction.reply({ content: "❌ User not found", ephemeral: true });
 
     if (interaction.customId === "blacklist") {
       return interaction.reply({
@@ -325,14 +308,14 @@ client.on("interactionCreate", async interaction => {
         embeds: [
           new EmbedBuilder()
             .setColor("Red")
-            .setTitle("⚠️ تأكيد البلاك ليست")
-            .setDescription(`هل أنت متأكد من إعطاء بلاك ليست للعضو **${member.user.tag}**؟`)
+            .setTitle("⚠️ CONFIRM BLACKLIST")
+            .setDescription(`Blacklist ${member.user.tag}?`)
         ],
         components: [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setCustomId(`confirm_bl_${member.id}`)
-              .setLabel("تأكيد العقوبة")
+              .setLabel("CONFIRM")
               .setStyle(ButtonStyle.Danger)
           )
         ]
@@ -343,13 +326,13 @@ client.on("interactionCreate", async interaction => {
       const targetId = interaction.customId.split("_")[2];
       const modal = new ModalBuilder()
         .setCustomId(`blacklist_modal_${targetId}`)
-        .setTitle("نظام العقوبات - توثيق الإجراء");
+        .setTitle("نظام العقوبات - إضافة سبب");
 
       const reasonInput = new TextInputBuilder()
         .setCustomId("reason_input")
-        .setLabel("تفاصيل المخالفة (السبب):")
+        .setLabel("ما هو سبب البلاك ليست؟")
         .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder("أدخل تفاصيل المخالفة ليتم تسجيلها في قاعدة البيانات...")
+        .setPlaceholder("اكتب السبب بالتفصيل هنا...")
         .setRequired(true);
 
       modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
@@ -357,20 +340,20 @@ client.on("interactionCreate", async interaction => {
     }
 
     if (interaction.customId === "unblacklist") {
-      await removeBlacklist(member, interaction.member, "تمت الإزالة بواسطة الإدارة");
+      await removeBlacklist(member, interaction.member, "Blacklist removed");
       selectedUser.delete(interaction.user.id);
-      return interaction.reply({ content: `♻️ تم إزالة البلاك ليست عن **${member.user.tag}** بنجاح.`, ephemeral: true });
+      return interaction.reply({ content: `♻️ ${member.user.tag} unblacklisted`, ephemeral: true });
     }
   }
 
-  /* 3. استقبال المودال (السبب) وتطبيق البلاك ليست */
+  /* 3. معالجة بيانات المودال */
   if (interaction.isModalSubmit()) {
     if (interaction.customId.startsWith("blacklist_modal_")) {
       const targetId = interaction.customId.split("_")[2];
       const reason = interaction.fields.getTextInputValue("reason_input");
 
       const member = await interaction.guild.members.fetch(targetId).catch(() => null);
-      if (!member) return interaction.reply({ content: "❌ لم يتم العثور على العضو.", ephemeral: true });
+      if (!member) return interaction.reply({ content: "❌ User not found", ephemeral: true });
 
       await applyBlacklist(member, interaction.member, reason);
       selectedUser.delete(interaction.user.id);
@@ -378,8 +361,8 @@ client.on("interactionCreate", async interaction => {
       return interaction.reply({
         embeds: [
           new EmbedBuilder()
-            .setColor("#F91A5A")
-            .setDescription(`🚫 تم إعطاء البلاك ليست للعضو **${member.user.tag}** بنجاح.`)
+            .setColor("Red")
+            .setDescription(`🚫 ${member.user.tag} blacklisted successfully.`)
         ],
         ephemeral: true
       });
@@ -390,11 +373,9 @@ client.on("interactionCreate", async interaction => {
 /* ================= READY ================= */
 
 client.on("ready", () => {
-  console.log(`✅ البوت شغال وجاهز باسم: ${client.user.tag}`);
+  console.log(`${client.user.tag} online`);
 });
 
 /* ================= LOGIN ================= */
 
 client.login(process.env.TOKEN);
-
-```
