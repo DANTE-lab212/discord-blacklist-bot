@@ -8,7 +8,10 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
-  StringSelectMenuBuilder
+  UserSelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require("discord.js");
 
 const fs = require("fs");
@@ -68,16 +71,10 @@ function getLogChannel(guild) {
 /* ================= PERMISSIONS ================= */
 
 function canUse(member) {
-
   const db = loadDB();
-
   if (!member) return false;
 
-  if (
-    member.permissions.has(
-      PermissionsBitField.Flags.Administrator
-    )
-  ) {
+  if (member.permissions.has(PermissionsBitField.Flags.Administrator)) {
     return true;
   }
 
@@ -85,11 +82,7 @@ function canUse(member) {
     return true;
   }
 
-  if (
-    member.roles.cache.some(r =>
-      db.allowedRoles.includes(r.id)
-    )
-  ) {
+  if (member.roles.cache.some(r => db.allowedRoles.includes(r.id))) {
     return true;
   }
 
@@ -98,25 +91,13 @@ function canUse(member) {
 
 /* ================= LOG SYSTEM ================= */
 
-async function sendLog(
-  guild,
-  type,
-  member,
-  admin,
-  reason
-) {
-
+async function sendLog(guild, type, member, admin, reason) {
   const logChannel = getLogChannel(guild);
-
   if (!logChannel) return;
 
   const db = loadDB();
-
-  const warns =
-    db.warnings[member.id]?.length || 0;
-
-  const timeouts =
-    db.timeouts[member.id]?.length || 0;
+  const warns = db.warnings[member.id]?.length || 0;
+  const timeouts = db.timeouts[member.id]?.length || 0;
 
   const embed = new EmbedBuilder()
     .setColor(type === "BL" ? "Red" : "Green")
@@ -125,91 +106,37 @@ async function sendLog(
         ? "🚫 USER BLACKLISTED"
         : "♻️ USER UNBLACKLISTED"
     )
-    .setThumbnail(
-      member.user.displayAvatarURL()
-    )
+    .setThumbnail(member.user.displayAvatarURL())
     .addFields(
-      {
-        name: "👤 User",
-        value: `${member.user.tag}`,
-        inline: true
-      },
-      {
-        name: "🆔 ID",
-        value: member.id,
-        inline: true
-      },
-      {
-        name: "👮 Staff",
-        value: admin.tag,
-        inline: true
-      },
-      {
-        name: "📝 Reason",
-        value: reason || "No reason",
-        inline: false
-      },
-      {
-        name: "⚠️ Warnings",
-        value: `${warns}`,
-        inline: true
-      },
-      {
-        name: "⏳ Timeouts",
-        value: `${timeouts}`,
-        inline: true
-      },
-      {
-        name: "📅 Account Created",
-        value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`,
-        inline: false
-      },
-      {
-        name: "📥 Joined Server",
-        value: member.joinedAt
-          ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:R>`
-          : "Unknown",
-        inline: false
-      }
+      { name: "👤 User", value: `${member.user.tag}`, inline: true },
+      { name: "🆔 ID", value: member.id, inline: true },
+      { name: "👮 Staff", value: admin.tag, inline: true },
+      { name: "📝 Reason", value: reason || "No reason", inline: false },
+      { name: "⚠️ Warnings", value: `${warns}`, inline: true },
+      { name: "⏳ Timeouts", value: `${timeouts}`, inline: true },
+      { name: "📅 Account Created", value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: false },
+      { name: "📥 Joined Server", value: member.joinedAt ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:R>` : "Unknown", inline: false }
     )
-    .setFooter({
-      text: "Ultimate Blacklist System"
-    })
+    .setFooter({ text: "Ultimate Blacklist System" })
     .setTimestamp();
 
-  logChannel.send({
-    embeds: [embed]
-  });
+  logChannel.send({ embeds: [embed] });
 }
 
 /* ================= APPLY BLACKLIST ================= */
 
-async function applyBlacklist(
-  member,
-  admin,
-  reason
-) {
-
+async function applyBlacklist(member, admin, reason) {
   const db = loadDB();
-
-  const role = getBlacklistRole(
-    member.guild
-  );
+  const role = getBlacklistRole(member.guild);
 
   if (!role) {
-    return admin.send(
-      "❌ Blacklisted role not found."
-    ).catch(() => {});
+    return admin.send("❌ Blacklisted role not found.").catch(() => {});
   }
 
-  /* remove all roles */
+  /* remove all roles and set blacklist role */
+  await member.roles.set([role]).catch(() => {});
 
-  await member.roles
-    .set([role])
-    .catch(() => {});
-
-  /* save */
-
+  /* save to database */
   db.blacklist[member.id] = {
     reason,
     by: admin.id,
@@ -229,8 +156,7 @@ async function applyBlacklist(
 
   saveDB(db);
 
-  /* DM */
-
+  /* Send DM to the user */
   try {
     await member.send({
       embeds: [
@@ -245,39 +171,21 @@ async function applyBlacklist(
     });
   } catch {}
 
-  /* LOG */
-
-  await sendLog(
-    member.guild,
-    "BL",
-    member,
-    admin.user,
-    reason
-  );
+  /* Send to log channel */
+  await sendLog(member.guild, "BL", member, admin.user, reason);
 }
 
 /* ================= REMOVE BLACKLIST ================= */
 
-async function removeBlacklist(
-  member,
-  admin,
-  reason
-) {
-
+async function removeBlacklist(member, admin, reason) {
   const db = loadDB();
-
-  const role = getBlacklistRole(
-    member.guild
-  );
+  const role = getBlacklistRole(member.guild);
 
   delete db.blacklist[member.id];
-
   saveDB(db);
 
   if (role) {
-    await member.roles
-      .remove(role)
-      .catch(() => {});
+    await member.roles.remove(role).catch(() => {});
   }
 
   try {
@@ -294,107 +202,98 @@ async function removeBlacklist(
     });
   } catch {}
 
-  await sendLog(
-    member.guild,
-    "UNBL",
-    member,
-    admin.user,
-    reason
-  );
+  await sendLog(member.guild, "UNBL", member, admin.user, reason);
 }
 
-/* ================= BLOCK BLACKLISTED USERS ================= */
+/* ================= EVENT: GUILD MEMBER ADD (ANTI-EVASION) ================= */
+
+client.on("guildMemberAdd", async (member) => {
+  const db = loadDB();
+
+  // التحقق التلقائي إذا كان العضو موجوداً في البلاك ليست عند دخوله
+  if (db.blacklist[member.id]) {
+    const role = getBlacklistRole(member.guild);
+    if (role) {
+      await member.roles.set([role]).catch(() => {});
+    }
+
+    // إرسال لوق التنبيه بمحاولة التحايل
+    const logChannel = getLogChannel(member.guild);
+    if (logChannel) {
+      const embed = new EmbedBuilder()
+        .setColor("Orange")
+        .setTitle("⚠️ محاولة تحايل وتخطي البلاك ليست")
+        .setDescription(`العضو **${member.user.tag}** حاول الدخول إلى السيرفر مجدداً وهو مدرج في قائمة البلاك ليست!`)
+        .addFields(
+          { name: "👤 المستخدم", value: `${member.user.tag}`, inline: true },
+          { name: "🆔 المعرف الخاص به", value: `${member.id}`, inline: true },
+          { name: "⚙️ الإجراء المتبع", value: "تمت إعادة سحب الرتب وفرض رتبة البلاك ليست تلقائياً.", inline: false }
+        )
+        .setThumbnail(member.user.displayAvatarURL())
+        .setFooter({ text: "Ultimate Blacklist System" })
+        .setTimestamp();
+
+      logChannel.send({ embeds: [embed] });
+    }
+  }
+});
+
+/* ================= MESSAGES & PANEL ================= */
 
 client.on("messageCreate", async message => {
-
   if (!message.guild) return;
   if (message.author.bot) return;
 
   const db = loadDB();
 
-  /* block blacklisted */
-
+  /* block blacklisted users from typing */
   if (db.blacklist[message.author.id]) {
-
-    if (
-      !message.member.permissions.has(
-        PermissionsBitField.Flags.Administrator
-      )
-    ) {
-
+    if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
       await message.delete().catch(() => {});
-
       return;
     }
   }
 
-  /* panel */
-
+  /* panel setup */
   if (message.content !== "!panel") return;
 
   if (!canUse(message.member)) {
-    return message.reply(
-      "❌ No permission"
-    );
+    return message.reply("❌ No permission");
   }
 
-  const members =
-    await message.guild.members.fetch();
+  // استخدام UserSelectMenuBuilder لحل مشكلة الـ 25 عضو نهائياً
+  const userMenu = new ActionRowBuilder().addComponents(
+    new UserSelectMenuBuilder()
+      .setCustomId("select_user")
+      .setPlaceholder("Select User")
+  );
 
-  const options = members
-    .filter(m => !m.user.bot)
-    .map(m => ({
-      label: m.user.username.slice(0, 25),
-      value: m.id
-    }))
-    .slice(0, 25);
+  const buttons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("blacklist")
+      .setLabel("🚫 BLACKLIST")
+      .setStyle(ButtonStyle.Danger),
 
-  const userMenu =
-    new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId("select_user")
-        .setPlaceholder("Select User")
-        .addOptions(options)
-    );
-
-  const buttons =
-    new ActionRowBuilder().addComponents(
-
-      new ButtonBuilder()
-        .setCustomId("blacklist")
-        .setLabel("🚫 BLACKLIST")
-        .setStyle(ButtonStyle.Danger),
-
-      new ButtonBuilder()
-        .setCustomId("unblacklist")
-        .setLabel("♻️ UNBLACKLIST")
-        .setStyle(ButtonStyle.Success)
-
-    );
+    new ButtonBuilder()
+      .setCustomId("unblacklist")
+      .setLabel("♻️ UNBLACKLIST")
+      .setStyle(ButtonStyle.Success)
+  );
 
   const embed = new EmbedBuilder()
     .setColor("Red")
     .setTitle("🚫 BLACKLIST PANEL")
-    .setDescription(
-      "Advanced moderation system"
-    );
+    .setDescription("Advanced moderation system");
 
   message.channel.send({
     embeds: [embed],
     components: [userMenu, buttons]
   });
-
 });
 
 /* ================= INTERACTIONS ================= */
 
 client.on("interactionCreate", async interaction => {
-
-  if (
-    !interaction.isButton() &&
-    !interaction.isStringSelectMenu()
-  ) return;
-
   if (!canUse(interaction.member)) {
     return interaction.reply({
       content: "❌ No permission",
@@ -402,147 +301,117 @@ client.on("interactionCreate", async interaction => {
     });
   }
 
-  /* select user */
-
-  if (interaction.isStringSelectMenu()) {
-
-    if (
-      interaction.customId ===
-      "select_user"
-    ) {
-
-      selectedUser.set(
-        interaction.user.id,
-        interaction.values[0]
-      );
-
+  /* 1. معالجة اختيار العضو من القائمة */
+  if (interaction.isUserSelectMenu()) {
+    if (interaction.customId === "select_user") {
+      selectedUser.set(interaction.user.id, interaction.values[0]);
       return interaction.reply({
-        content:
-          "✅ User selected",
+        content: "✅ User selected",
         ephemeral: true
       });
     }
   }
 
-  const selected =
-    selectedUser.get(
-      interaction.user.id
-    );
+  /* 2. معالجة ضغط الأزرار */
+  if (interaction.isButton()) {
+    const selected = selectedUser.get(interaction.user.id);
 
-  if (!selected) {
-    return interaction.reply({
-      content:
-        "❌ Select user first",
-      ephemeral: true
-    });
-  }
+    if (!selected) {
+      return interaction.reply({
+        content: "❌ Select user first",
+        ephemeral: true
+      });
+    }
 
-  const member =
-    await interaction.guild.members
-      .fetch(selected)
-      .catch(() => null);
+    const member = await interaction.guild.members.fetch(selected).catch(() => null);
 
-  if (!member) {
-    return interaction.reply({
-      content:
-        "❌ User not found",
-      ephemeral: true
-    });
-  }
+    if (!member) {
+      return interaction.reply({
+        content: "❌ User not found",
+        ephemeral: true
+      });
+    }
 
-  /* blacklist confirm */
-
-  if (
-    interaction.customId ===
-    "blacklist"
-  ) {
-
-    return interaction.reply({
-      ephemeral: true,
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Red")
-          .setTitle(
-            "⚠️ CONFIRM BLACKLIST"
-          )
-          .setDescription(
-            `Blacklist ${member.user.tag}?`
-          )
-      ],
-      components: [
-        new ActionRowBuilder()
-          .addComponents(
-
+    /* عند الضغط على زر الحظر الأساسي */
+    if (interaction.customId === "blacklist") {
+      return interaction.reply({
+        ephemeral: true,
+        embeds: [
+          new EmbedBuilder()
+            .setColor("Red")
+            .setTitle("⚠️ CONFIRM BLACKLIST")
+            .setDescription(`Blacklist ${member.user.tag}?`)
+        ],
+        components: [
+          new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(
-                `confirm_bl_${member.id}`
-              )
+              .setCustomId(`confirm_bl_${member.id}`)
               .setLabel("CONFIRM")
-              .setStyle(
-                ButtonStyle.Danger
-              )
-
+              .setStyle(ButtonStyle.Danger)
           )
-      ]
-    });
+        ]
+      });
+    }
+
+    /* عند الضغط على زر التأكيد الـ CONFIRM (إظهار المربع المنبثق) */
+    if (interaction.customId.startsWith("confirm_bl_")) {
+      const targetId = interaction.customId.split("_")[2];
+
+      const modal = new ModalBuilder()
+        .setCustomId(`blacklist_modal_${targetId}`)
+        .setTitle("إضافة سبب الحظر");
+
+      const reasonInput = new TextInputBuilder()
+        .setCustomId("reason_input")
+        .setLabel("ما هو سبب البلاك ليست؟")
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder("اكتب السبب بالتفصيل هنا...")
+        .setRequired(true);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+      return interaction.showModal(modal);
+    }
+
+    /* عند الضغط على زر فك الحظر */
+    if (interaction.customId === "unblacklist") {
+      await removeBlacklist(member, interaction.member, "Blacklist removed");
+      selectedUser.delete(interaction.user.id); // تنظيف الذاكرة
+
+      return interaction.reply({
+        content: `♻️ ${member.user.tag} unblacklisted`,
+        ephemeral: true
+      });
+    }
   }
 
-  /* confirm */
+  /* 3. معالجة استقبال بيانات الـ Modal (مربع نص السبب) */
+  if (interaction.isModalSubmit()) {
+    if (interaction.customId.startsWith("blacklist_modal_")) {
+      const targetId = interaction.customId.split("_")[2];
+      const reason = interaction.fields.getTextInputValue("reason_input");
 
-  if (
-    interaction.customId.startsWith(
-      "confirm_bl_"
-    )
-  ) {
+      const member = await interaction.guild.members.fetch(targetId).catch(() => null);
+      if (!member) return interaction.reply({ content: "❌ User not found", ephemeral: true });
 
-    await applyBlacklist(
-      member,
-      interaction.member,
-      "No reason provided"
-    );
+      await applyBlacklist(member, interaction.member, reason);
+      selectedUser.delete(interaction.user.id); // تنظيف الذاكرة بعد النجاح
 
-    return interaction.update({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Red")
-          .setDescription(
-            `🚫 ${member.user.tag} blacklisted`
-          )
-      ],
-      components: []
-    });
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor("Red")
+            .setDescription(`🚫 ${member.user.tag} blacklisted successfully.`)
+        ],
+        ephemeral: true
+      });
+    }
   }
-
-  /* unblacklist */
-
-  if (
-    interaction.customId ===
-    "unblacklist"
-  ) {
-
-    await removeBlacklist(
-      member,
-      interaction.member,
-      "Blacklist removed"
-    );
-
-    return interaction.reply({
-      content:
-        `♻️ ${member.user.tag} unblacklisted`,
-      ephemeral: true
-    });
-  }
-
 });
 
 /* ================= READY ================= */
 
 client.on("ready", () => {
-
-  console.log(
-    `${client.user.tag} online`
-  );
-
+  console.log(`${client.user.tag} online`);
 });
 
 /* ================= LOGIN ================= */
