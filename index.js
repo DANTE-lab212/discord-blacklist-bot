@@ -1,4 +1,4 @@
-require('dotenv').config();
+require("dotenv").config();
 
 const {
   Client,
@@ -8,11 +8,12 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
-  StringSelectMenuBuilder,
-  ChannelType
-} = require('discord.js');
+  StringSelectMenuBuilder
+} = require("discord.js");
 
-const fs = require('fs');
+const fs = require("fs");
+
+/* ================= CLIENT ================= */
 
 const client = new Client({
   intents: [
@@ -23,324 +24,527 @@ const client = new Client({
   ]
 });
 
-const DB = './data.json';
+/* ================= DATABASE ================= */
 
-/* ================= DB ================= */
-function load() {
-  if (!fs.existsSync(DB)) {
+const DB_FILE = "./data.json";
+
+function loadDB() {
+  if (!fs.existsSync(DB_FILE)) {
     return {
       blacklist: {},
       history: {},
       warnings: {},
-      timeouts: {}
+      timeouts: {},
+      allowedUsers: [],
+      allowedRoles: []
     };
   }
-  return JSON.parse(fs.readFileSync(DB));
+
+  return JSON.parse(fs.readFileSync(DB_FILE));
 }
 
-function save(data) {
-  fs.writeFileSync(DB, JSON.stringify(data, null, 2));
+function saveDB(data) {
+  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-/* ================= PERMISSION ================= */
-function isAdmin(member) {
-  return member.permissions.has(PermissionsBitField.Flags.Administrator);
-}
+/* ================= TEMP ================= */
+
+const selectedUser = new Map();
 
 /* ================= SETUP ================= */
-async function setup(guild) {
 
-  let role = guild.roles.cache.find(r => r.name === "Blacklisted");
-
-  if (!role) {
-    role = await guild.roles.create({
-      name: "Blacklisted",
-      permissions: []
-    });
-  }
-
-  let room = guild.channels.cache.find(c => c.name === "🚫-BLACKLISTED");
-
-  if (!room) {
-    room = await guild.channels.create({
-      name: "🚫-BLACKLISTED",
-      type: ChannelType.GuildText,
-      permissionOverwrites: [
-        { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-        {
-          id: role.id,
-          allow: [
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.SendMessages
-          ]
-        }
-      ]
-    });
-  }
-
-  let log = guild.channels.cache.find(c => c.name === "blacklist-log");
-
-  if (!log) {
-    log = await guild.channels.create({
-      name: "blacklist-log",
-      type: ChannelType.GuildText
-    });
-  }
-
-  return { role, room, log };
+function getBlacklistRole(guild) {
+  return guild.roles.cache.find(
+    r => r.name.toLowerCase() === "blacklisted"
+  );
 }
 
-/* ================= LOG ================= */
-async function logAction(guild, action, target, admin, reason, duration) {
+function getLogChannel(guild) {
+  return guild.channels.cache.find(
+    c => c.name.toLowerCase() === "blacklist-log"
+  );
+}
 
-  const { log } = await setup(guild);
+/* ================= PERMISSIONS ================= */
+
+function canUse(member) {
+
+  const db = loadDB();
+
+  if (!member) return false;
+
+  if (
+    member.permissions.has(
+      PermissionsBitField.Flags.Administrator
+    )
+  ) {
+    return true;
+  }
+
+  if (db.allowedUsers.includes(member.id)) {
+    return true;
+  }
+
+  if (
+    member.roles.cache.some(r =>
+      db.allowedRoles.includes(r.id)
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/* ================= LOG SYSTEM ================= */
+
+async function sendLog(
+  guild,
+  type,
+  member,
+  admin,
+  reason
+) {
+
+  const logChannel = getLogChannel(guild);
+
+  if (!logChannel) return;
+
+  const db = loadDB();
+
+  const warns =
+    db.warnings[member.id]?.length || 0;
+
+  const timeouts =
+    db.timeouts[member.id]?.length || 0;
 
   const embed = new EmbedBuilder()
-    .setTitle("📛 BLACKLIST LOG")
-    .setColor("Red")
-    .addFields(
-      { name: "User", value: target.user.tag, inline: true },
-      { name: "By", value: admin.user.tag, inline: true },
-      { name: "Action", value: action, inline: true },
-      { name: "Reason", value: reason || "None", inline: true },
-      { name: "Duration", value: duration === "perma" ? "Permanent" : duration, inline: true }
+    .setColor(type === "BL" ? "Red" : "Green")
+    .setTitle(
+      type === "BL"
+        ? "🚫 USER BLACKLISTED"
+        : "♻️ USER UNBLACKLISTED"
     )
+    .setThumbnail(
+      member.user.displayAvatarURL()
+    )
+    .addFields(
+      {
+        name: "👤 User",
+        value: `${member.user.tag}`,
+        inline: true
+      },
+      {
+        name: "🆔 ID",
+        value: member.id,
+        inline: true
+      },
+      {
+        name: "👮 Staff",
+        value: admin.tag,
+        inline: true
+      },
+      {
+        name: "📝 Reason",
+        value: reason || "No reason",
+        inline: false
+      },
+      {
+        name: "⚠️ Warnings",
+        value: `${warns}`,
+        inline: true
+      },
+      {
+        name: "⏳ Timeouts",
+        value: `${timeouts}`,
+        inline: true
+      },
+      {
+        name: "📅 Account Created",
+        value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`,
+        inline: false
+      },
+      {
+        name: "📥 Joined Server",
+        value: member.joinedAt
+          ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:R>`
+          : "Unknown",
+        inline: false
+      }
+    )
+    .setFooter({
+      text: "Ultimate Blacklist System"
+    })
     .setTimestamp();
 
-  log.send({ embeds: [embed] });
+  logChannel.send({
+    embeds: [embed]
+  });
 }
 
-/* ================= APPLY ================= */
-async function apply(member, reason, duration) {
+/* ================= APPLY BLACKLIST ================= */
 
-  const { role, room } = await setup(member.guild);
-  const db = load();
+async function applyBlacklist(
+  member,
+  admin,
+  reason
+) {
 
-  await member.roles.add(role);
+  const db = loadDB();
 
-  let expires = null;
-  if (duration !== "perma") {
-    expires = Date.now() + Number(duration);
+  const role = getBlacklistRole(
+    member.guild
+  );
+
+  if (!role) {
+    return admin.send(
+      "❌ Blacklisted role not found."
+    ).catch(() => {});
   }
+
+  /* remove all roles */
+
+  await member.roles
+    .set([role])
+    .catch(() => {});
+
+  /* save */
 
   db.blacklist[member.id] = {
     reason,
-    expires
+    by: admin.id,
+    time: Date.now()
   };
 
-  if (!db.history[member.id]) db.history[member.id] = [];
-  db.history[member.id].push(`BLACKLISTED | ${reason}`);
+  if (!db.history[member.id]) {
+    db.history[member.id] = [];
+  }
 
-  save(db);
+  db.history[member.id].push({
+    type: "BLACKLIST",
+    reason,
+    by: admin.id,
+    time: Date.now()
+  });
+
+  saveDB(db);
 
   /* DM */
+
   try {
     await member.send({
       embeds: [
         new EmbedBuilder()
-          .setTitle("🚫 BLACKLISTED")
           .setColor("Red")
+          .setTitle("🚫 ACCESS DENIED")
           .setDescription(
-            `You are blacklisted from **${member.guild.name}**\n\n` +
-            `📝 Reason: ${reason}\n` +
-            `⏳ Duration: ${duration === "perma" ? "Permanent" : duration}`
+            `You are blacklisted from **${member.guild.name}**.\n\n` +
+            `📝 Reason: ${reason}`
           )
       ]
     });
   } catch {}
 
-  /* ROOM */
-  room.send({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle("🚫 USER BLACKLISTED")
-        .setColor("Red")
-        .setDescription(
-          `${member.user.tag}\n` +
-          `📝 ${reason}\n` +
-          `⏳ ${duration === "perma" ? "Permanent" : duration}`
-        )
-    ]
-  });
+  /* LOG */
+
+  await sendLog(
+    member.guild,
+    "BL",
+    member,
+    admin.user,
+    reason
+  );
 }
 
-/* ================= AUTO REMOVE ================= */
-setInterval(async () => {
+/* ================= REMOVE BLACKLIST ================= */
 
-  const db = load();
+async function removeBlacklist(
+  member,
+  admin,
+  reason
+) {
 
-  for (const id in db.blacklist) {
+  const db = loadDB();
 
-    const data = db.blacklist[id];
+  const role = getBlacklistRole(
+    member.guild
+  );
 
-    if (data.expires && Date.now() > data.expires) {
+  delete db.blacklist[member.id];
 
-      for (const guild of client.guilds.cache.values()) {
+  saveDB(db);
 
-        const member = await guild.members.fetch(id).catch(() => null);
-        if (!member) continue;
+  if (role) {
+    await member.roles
+      .remove(role)
+      .catch(() => {});
+  }
 
-        const role = guild.roles.cache.find(r => r.name === "Blacklisted");
-        if (role) await member.roles.remove(role);
-      }
+  try {
+    await member.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor("Green")
+          .setTitle("♻️ BLACKLIST REMOVED")
+          .setDescription(
+            `Your blacklist was removed.\n\n` +
+            `📝 Reason: ${reason}`
+          )
+      ]
+    });
+  } catch {}
 
-      delete db.blacklist[id];
+  await sendLog(
+    member.guild,
+    "UNBL",
+    member,
+    admin.user,
+    reason
+  );
+}
+
+/* ================= BLOCK BLACKLISTED USERS ================= */
+
+client.on("messageCreate", async message => {
+
+  if (!message.guild) return;
+  if (message.author.bot) return;
+
+  const db = loadDB();
+
+  /* block blacklisted */
+
+  if (db.blacklist[message.author.id]) {
+
+    if (
+      !message.member.permissions.has(
+        PermissionsBitField.Flags.Administrator
+      )
+    ) {
+
+      await message.delete().catch(() => {});
+
+      return;
     }
   }
 
-  save(db);
+  /* panel */
 
-}, 60000);
+  if (message.content !== "!panel") return;
 
-/* ================= PANEL ================= */
-const selectedUser = new Map();
-const selectedDuration = new Map();
+  if (!canUse(message.member)) {
+    return message.reply(
+      "❌ No permission"
+    );
+  }
 
-client.on('messageCreate', async (message) => {
+  const members =
+    await message.guild.members.fetch();
 
-  if (message.author.bot) return;
+  const options = members
+    .filter(m => !m.user.bot)
+    .map(m => ({
+      label: m.user.username.slice(0, 25),
+      value: m.id
+    }))
+    .slice(0, 25);
 
-  if (message.content === "!panel") {
-
-    if (!isAdmin(message.member)) return;
-
-    const members = await message.guild.members.fetch();
-
-    const options = members
-      .filter(m => !m.user.bot)
-      .first(25)
-      .map(m => ({
-        label: `👤 ${m.user.username}`,
-        value: m.id,
-        description: m.id
-      }));
-
-    const menu = new ActionRowBuilder().addComponents(
+  const userMenu =
+    new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId("user")
-        .setPlaceholder("Select user")
+        .setCustomId("select_user")
+        .setPlaceholder("Select User")
         .addOptions(options)
     );
 
-    const duration = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId("duration")
-        .setPlaceholder("Select duration")
-        .addOptions([
-          { label: "1 Hour", value: "3600000" },
-          { label: "2 Hours", value: "7200000" },
-          { label: "4 Hours", value: "14400000" },
-          { label: "10 Hours", value: "36000000" },
-          { label: "1 Day", value: "86400000" },
-          { label: "1 Week", value: "604800000" },
-          { label: "1 Month", value: "2592000000" },
-          { label: "Permanent", value: "perma" }
-        ])
+  const buttons =
+    new ActionRowBuilder().addComponents(
+
+      new ButtonBuilder()
+        .setCustomId("blacklist")
+        .setLabel("🚫 BLACKLIST")
+        .setStyle(ButtonStyle.Danger),
+
+      new ButtonBuilder()
+        .setCustomId("unblacklist")
+        .setLabel("♻️ UNBLACKLIST")
+        .setStyle(ButtonStyle.Success)
+
     );
 
-    const buttons = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("bl").setLabel("🚫 BLACKLIST").setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId("unbl").setLabel("♻️ UNBLACKLIST").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("profile").setLabel("👤 PROFILE").setStyle(ButtonStyle.Primary)
+  const embed = new EmbedBuilder()
+    .setColor("Red")
+    .setTitle("🚫 BLACKLIST PANEL")
+    .setDescription(
+      "Advanced moderation system"
     );
 
-    const embed = new EmbedBuilder()
-      .setTitle("🚨 BLACKLIST PANEL")
-      .setColor("Red")
-      .setDescription("Elite Security System");
+  message.channel.send({
+    embeds: [embed],
+    components: [userMenu, buttons]
+  });
 
-    message.reply({ embeds: [embed], components: [menu, duration, buttons] });
-  }
 });
 
 /* ================= INTERACTIONS ================= */
-client.on('interactionCreate', async (interaction) => {
 
-  const db = load();
+client.on("interactionCreate", async interaction => {
+
+  if (
+    !interaction.isButton() &&
+    !interaction.isStringSelectMenu()
+  ) return;
+
+  if (!canUse(interaction.member)) {
+    return interaction.reply({
+      content: "❌ No permission",
+      ephemeral: true
+    });
+  }
+
+  /* select user */
 
   if (interaction.isStringSelectMenu()) {
 
-    if (interaction.customId === "user") {
-      selectedUser.set(interaction.user.id, interaction.values[0]);
-      return interaction.reply({ content: "User selected", ephemeral: true });
-    }
+    if (
+      interaction.customId ===
+      "select_user"
+    ) {
 
-    if (interaction.customId === "duration") {
-      selectedDuration.set(interaction.user.id, interaction.values[0]);
-      return interaction.reply({ content: "Duration selected", ephemeral: true });
-    }
-  }
-
-  if (interaction.isButton()) {
-
-    if (!isAdmin(interaction.member))
-      return interaction.reply({ content: "No permission", ephemeral: true });
-
-    const uid = selectedUser.get(interaction.user.id);
-    const member = await interaction.guild.members.fetch(uid).catch(() => null);
-    if (!member) return;
-
-    const duration = selectedDuration.get(interaction.user.id) || "perma";
-    const reason = "No reason set";
-
-    /* BLACKLIST */
-    if (interaction.customId === "bl") {
+      selectedUser.set(
+        interaction.user.id,
+        interaction.values[0]
+      );
 
       return interaction.reply({
-        content: `Confirm blacklist for ${member.user.tag}?`,
-        components: [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`confirm_${member.id}`)
-              .setLabel("CONFIRM")
-              .setStyle(ButtonStyle.Danger)
-          )
-        ],
+        content:
+          "✅ User selected",
         ephemeral: true
       });
     }
-
-    /* CONFIRM */
-    if (interaction.customId.startsWith("confirm_")) {
-
-      await apply(member, reason, duration);
-      await logAction(interaction.guild, "BLACKLIST", member, interaction.member, reason, duration);
-
-      return interaction.update({ content: "🚫 Done", components: [] });
-    }
-
-    /* UNBLACKLIST */
-    if (interaction.customId === "unbl") {
-
-      delete db.blacklist[member.id];
-      save(db);
-
-      const role = interaction.guild.roles.cache.find(r => r.name === "Blacklisted");
-      if (role) await member.roles.remove(role);
-
-      await logAction(interaction.guild, "UNBLACKLIST", member, interaction.member);
-
-      return interaction.reply({ content: "♻️ Removed", ephemeral: true });
-    }
-
-    /* PROFILE */
-    if (interaction.customId === "profile") {
-
-      const data = db.blacklist[member.id];
-
-      const embed = new EmbedBuilder()
-        .setTitle("👤 PROFILE")
-        .setColor("Blue")
-        .addFields(
-          { name: "User", value: member.user.tag, inline: true },
-          { name: "Created", value: member.user.createdAt.toLocaleString(), inline: true },
-          { name: "Joined", value: member.joinedAt?.toLocaleString() || "Unknown", inline: true },
-          { name: "Blacklisted", value: data ? "YES" : "NO", inline: true }
-        );
-
-      return interaction.reply({ embeds: [embed], ephemeral: true });
-    }
   }
+
+  const selected =
+    selectedUser.get(
+      interaction.user.id
+    );
+
+  if (!selected) {
+    return interaction.reply({
+      content:
+        "❌ Select user first",
+      ephemeral: true
+    });
+  }
+
+  const member =
+    await interaction.guild.members
+      .fetch(selected)
+      .catch(() => null);
+
+  if (!member) {
+    return interaction.reply({
+      content:
+        "❌ User not found",
+      ephemeral: true
+    });
+  }
+
+  /* blacklist confirm */
+
+  if (
+    interaction.customId ===
+    "blacklist"
+  ) {
+
+    return interaction.reply({
+      ephemeral: true,
+      embeds: [
+        new EmbedBuilder()
+          .setColor("Red")
+          .setTitle(
+            "⚠️ CONFIRM BLACKLIST"
+          )
+          .setDescription(
+            `Blacklist ${member.user.tag}?`
+          )
+      ],
+      components: [
+        new ActionRowBuilder()
+          .addComponents(
+
+            new ButtonBuilder()
+              .setCustomId(
+                `confirm_bl_${member.id}`
+              )
+              .setLabel("CONFIRM")
+              .setStyle(
+                ButtonStyle.Danger
+              )
+
+          )
+      ]
+    });
+  }
+
+  /* confirm */
+
+  if (
+    interaction.customId.startsWith(
+      "confirm_bl_"
+    )
+  ) {
+
+    await applyBlacklist(
+      member,
+      interaction.member,
+      "No reason provided"
+    );
+
+    return interaction.update({
+      embeds: [
+        new EmbedBuilder()
+          .setColor("Red")
+          .setDescription(
+            `🚫 ${member.user.tag} blacklisted`
+          )
+      ],
+      components: []
+    });
+  }
+
+  /* unblacklist */
+
+  if (
+    interaction.customId ===
+    "unblacklist"
+  ) {
+
+    await removeBlacklist(
+      member,
+      interaction.member,
+      "Blacklist removed"
+    );
+
+    return interaction.reply({
+      content:
+        `♻️ ${member.user.tag} unblacklisted`,
+      ephemeral: true
+    });
+  }
+
 });
+
+/* ================= READY ================= */
+
+client.on("ready", () => {
+
+  console.log(
+    `${client.user.tag} online`
+  );
+
+});
+
+/* ================= LOGIN ================= */
 
 client.login(process.env.TOKEN);
