@@ -420,4 +420,8 @@ client.on("interactionCreate", async interaction => {
 });
 
 client.on("ready", () => console.log("Bot online"));
+<<<<<<< HEAD
 client.login(process.env.TOKEN);
+=======
+client.login(process.env.TOKEN);
+>>>>>>> 67685ba (final secure update)
